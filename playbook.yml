@@ -1,0 +1,77 @@
+---
+- name: Configure Cluster Hosts and Utilities on All Nodes
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Ensure nfs-utils is installed on all nodes
+      dnf:
+        name: nfs-utils
+        state: present
+
+    - name: Dynamically populate /etc/hosts from inventory
+      copy:
+        content: |
+          127.0.0.1   localhost localhost.localdomain
+          ::1         localhost localhost.localdomain
+          {% for host in groups['all'] %}
+          {{ hostvars[host]['ansible_host'] }} {{ host }}
+          {% endfor %}
+        dest: /etc/hosts
+        mode: '0644'
+
+- name: Configure NFS Server
+  hosts: nfs_servers
+  become: yes
+
+  tasks:
+    - name: Create export directory structure
+      file:
+        path: /srv/nfs/shared
+        state: directory
+        mode: '0755'
+
+    - name: Configure /etc/exports for Rocky Linux with no_root_squash
+      copy:
+        content: |
+          /srv/nfs {{ cluster_subnet }}(rw,sync,fsid=0,no_subtree_check,no_root_squash)
+          /srv/nfs/shared {{ cluster_subnet }}(rw,sync,no_subtree_check,no_root_squash)
+        dest: /etc/exports
+        mode: '0644'
+      notify: Reload exports
+
+    - name: Enable and start nfs-server service
+      service:
+        name: nfs-server
+        enabled: yes
+        state: started
+
+    - name: Open firewall for NFS services
+      firewalld:
+        service: nfs
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+  handlers:
+    - name: Reload exports
+      command: exportfs -rav
+
+- name: Configure NFS Clients
+  hosts: nfs_clients
+  become: yes
+
+  tasks:
+    - name: Create local mount directory
+      file:
+        path: /mnt/nfs/shared
+        state: directory
+        mode: '0755'
+
+    - name: Configure fstab entry for NFSv4 share and mount it
+      mount:
+        path: /mnt/nfs/shared
+        src: "{{ nfs_server_ip }}:/shared"
+        fstype: nfs4
+        opts: vers=4
+        state: mounted
