@@ -15,7 +15,7 @@
           127.0.0.1   localhost localhost.localdomain
           ::1         localhost localhost.localdomain
           {% for host in groups['all'] %}
-          {{ hostvars[host]['ansible_host'] }} {{ host }}
+          {{ hostvars[host]['ansible_host'] | default(hostvars[host]['ansible_default_ipv4']['address'] | default(host)) }} {{ host }}
           {% endfor %}
         dest: /etc/hosts
         mode: '0644'
@@ -39,6 +39,10 @@
         dest: /etc/exports
         mode: '0644'
       notify: Reload exports
+
+    - name: Set system hostname from inventory
+      hostname:
+        name: "{{ inventory_hostname }}"
 
     - name: Enable and start nfs-server service
       service:
