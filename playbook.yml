@@ -25,6 +25,30 @@
   become: yes
 
   tasks:
+    - name: Install XFS tools
+      ansible.builtin.dnf:
+        name: xfsprogs
+        state: present
+
+    - name: Create an XFS filesystem on the data disk
+      community.general.filesystem:
+        dev: /dev/sdb
+        fstype: xfs
+        force: false
+
+    - name: Read the data filesystem UUID
+      ansible.builtin.command: blkid -s UUID -o value /dev/sdb
+      register: nfs_disk_uuid
+      changed_when: false
+
+    - name: Mount the data disk persistently
+      ansible.posix.mount:
+        path: /srv/nfs/shared
+        src: "UUID={{ nfs_disk_uuid.stdout | trim }}"
+        fstype: xfs
+        opts: defaults
+        state: mounted
+
     - name: Create export directory structure
       file:
         path: /srv/nfs/shared
