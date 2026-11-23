@@ -1,0 +1,17 @@
+---
+- name: Wait for the NFS server from each client
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[nfs_server_host]['cluster_ip'] }}"
+    port: 2049
+    timeout: 30
+
+- name: Mount configured NFS shares persistently
+  ansible.posix.mount:
+    path: "{{ item.client_path }}"
+    src: "{{ hostvars[nfs_server_host]['cluster_ip'] }}:/{{ item.name }}"
+    fstype: nfs
+    opts: "{{ nfs_client_mount_options }}"
+    state: mounted
+  loop: "{{ nfs_shares }}"
+  loop_control:
+    label: "{{ item.client_path }}"

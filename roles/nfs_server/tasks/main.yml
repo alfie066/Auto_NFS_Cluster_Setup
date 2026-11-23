@@ -1,0 +1,142 @@
+---
+- name: Validate server-specific variables
+  ansible.builtin.assert:
+    that:
+      - nfs_storage_mounts is defined
+      - nfs_firewall_zone is defined
+      - cluster_ip in ansible_facts['all_ipv4_addresses']
+    fail_msg: "Check server variables and its internal cluster IP."
+
+- name: Gather service state
+  ansible.builtin.service_facts:
+
+- name: Require an existing running firewall
+  ansible.builtin.assert:
+    that:
+      - >-
+        ansible_facts['services'].get(
+          'firewalld.service', {}
+        ).get('state', '') == 'running'
+    fail_msg: >-
+      Configure and start firewalld separately, preserving SSH access,
+      then set nfs_firewall_zone to the internal interface's zone.
+
+- name: Install server filesystem tools and firewall bindings
+  ansible.builtin.dnf:
+    name:
+      - xfsprogs
+      - e2fsprogs
+      - python3-firewall
+    state: present
+
+- name: Create NFS namespace root
+  ansible.builtin.file:
+    path: "{{ nfs_export_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Mount explicitly configured existing storage
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ item.src }}"
+    fstype: "{{ item.fstype }}"
+    opts: "{{ item.opts }}"
+    state: mounted
+  loop: "{{ nfs_storage_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Verify required backing filesystems are mounted
+  ansible.builtin.command:
+    argv:
+      - mountpoint
+      - --quiet
+      - "{{ item.required_mount }}"
+  changed_when: false
+  when: item.required_mount | length > 0
+  loop: "{{ nfs_shares }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create share directories and set top-level permissions
+  ansible.builtin.file:
+    path: "{{ nfs_export_root }}/{{ item.name }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop: "{{ nfs_shares }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure NFSv4 over TCP on the cluster address
+  community.general.ini_file:
+    path: /etc/nfs.conf
+    section: nfsd
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { option: host, value: "{{ cluster_ip }}" }
+    - { option: vers3, value: "n" }
+    - { option: vers4, value: "y" }
+    - { option: tcp, value: "y" }
+    - { option: udp, value: "n" }
+  notify: Restart NFS server
+
+- name: Create systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nfs-server.service.d
+    state: directory
+    mode: "0755"
+
+- name: Order NFS startup after required backing mounts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nfs-server.service.d/storage.conf
+    mode: "0644"
+    content: |
+      [Unit]
+      {% for share in nfs_shares %}
+      {% if share.required_mount | length > 0 %}
+      RequiresMountsFor={{ share.required_mount }}
+      {% endif %}
+      {% endfor %}
+  notify: Restart NFS server
+
+- name: Create exports fragment directory
+  ansible.builtin.file:
+    path: /etc/exports.d
+    state: directory
+    mode: "0755"
+
+- name: Configure this project's exports
+  ansible.builtin.template:
+    src: exports.j2
+    dest: /etc/exports.d/hpc-nfs.exports
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload NFS exports
+
+- name: Allow cluster NFSv4 traffic in the specified zone
+  ansible.posix.firewalld:
+    zone: "{{ nfs_firewall_zone }}"
+    rich_rule: >-
+      rule family="ipv4"
+      source address="{{ cluster_subnet }}"
+      port port="2049" protocol="tcp" accept
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Enable and start NFS server
+  ansible.builtin.systemd_service:
+    name: nfs-server
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply pending server changes before client configuration
+  ansible.builtin.meta: flush_handlers

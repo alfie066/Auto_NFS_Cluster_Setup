@@ -1,105 +1,65 @@
 ---
-- name: Configure Cluster Hosts and Utilities on All Nodes
-  hosts: all
-  become: yes
+- name: Validate inventory and prepare NFS nodes
+  hosts: nfs_servers:nfs_clients
+  become: true
+  any_errors_fatal: true
 
-  tasks:
-    - name: Ensure nfs-utils is installed on all nodes
-      dnf:
-        name: nfs-utils
-        state: present
+  pre_tasks:
+    - name: Require exactly one explicitly selected NFS server
+      ansible.builtin.assert:
+        that:
+          - groups.get('nfs_servers', []) | length == 1
+          - nfs_server_host in groups.get('nfs_servers', [])
+          - nfs_server_host not in groups.get('nfs_clients', [])
+        fail_msg: >-
+          Select exactly one NFS server and do not also place it
+          in nfs_clients.
+      run_once: true
 
-    - name: Dynamically populate /etc/hosts from inventory
-      copy:
-        content: |
-          127.0.0.1   localhost localhost.localdomain
-          ::1         localhost localhost.localdomain
-          {% for host in groups['all'] %}
-          {{ hostvars[host]['ansible_host'] | default(hostvars[host]['ansible_default_ipv4']['address'] | default(host)) }} {{ host }}
-          {% endfor %}
-        dest: /etc/hosts
-        mode: '0644'
+    - name: Validate basic configuration
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Rocky'
+          - ansible_facts['distribution_major_version'] == '9'
+          - cluster_ip is defined
+          - nfs_export_root is match('^/[^\\s]+$')
+          - nfs_export_root != '/'
+          - not nfs_export_root.endswith('/')
+          - nfs_shares | length > 0
+          - >-
+            (nfs_shares | map(attribute='name') | list | unique | length)
+            == (nfs_shares | length)
+          - >-
+            (nfs_shares | map(attribute='client_path') | list | unique | length)
+            == (nfs_shares | length)
 
-- name: Configure NFS Server
+    - name: Validate share definitions
+      ansible.builtin.assert:
+        that:
+          - item.name is match('^[A-Za-z0-9_-]+$')
+          - item.client_path is match('^/[^\\s]+$')
+          - item.client_path != '/'
+          - item.owner is defined
+          - item.group is defined
+          - item.mode is defined
+          - item.export_options is defined
+          - item.required_mount is defined
+      loop: "{{ nfs_shares }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+  roles:
+    - nfs_common
+
+- name: Configure NFS server before clients
   hosts: nfs_servers
-  become: yes
+  become: true
+  any_errors_fatal: true
+  roles:
+    - nfs_server
 
-  tasks:
-    - name: Install XFS tools
-      ansible.builtin.dnf:
-        name: xfsprogs
-        state: present
-
-    - name: Create an XFS filesystem on the data disk
-      community.general.filesystem:
-        dev: /dev/sdb
-        fstype: xfs
-        force: false
-
-    - name: Read the data filesystem UUID
-      ansible.builtin.command: blkid -s UUID -o value /dev/sdb
-      register: nfs_disk_uuid
-      changed_when: false
-
-    - name: Mount the data disk persistently
-      ansible.posix.mount:
-        path: /srv/nfs/shared
-        src: "UUID={{ nfs_disk_uuid.stdout | trim }}"
-        fstype: xfs
-        opts: defaults
-        state: mounted
-
-    - name: Create export directory structure
-      file:
-        path: /srv/nfs/shared
-        state: directory
-        mode: '0755'
-
-    - name: Configure /etc/exports for Rocky Linux with no_root_squash
-      copy:
-        content: |
-          /srv/nfs {{ cluster_subnet }}(rw,sync,fsid=0,no_subtree_check,no_root_squash)
-          /srv/nfs/shared {{ cluster_subnet }}(rw,sync,no_subtree_check,no_root_squash)
-        dest: /etc/exports
-        mode: '0644'
-      notify: Reload exports
-
-    - name: Set system hostname from inventory
-      hostname:
-        name: "{{ inventory_hostname }}"
-
-    - name: Enable and start nfs-server service
-      service:
-        name: nfs-server
-        enabled: yes
-        state: started
-
-    - name: Open firewall for NFS services
-      firewalld:
-        service: nfs
-        permanent: yes
-        state: enabled
-        immediate: yes
-
-  handlers:
-    - name: Reload exports
-      command: exportfs -rav
-
-- name: Configure NFS Clients
+- name: Configure NFS clients
   hosts: nfs_clients
-  become: yes
-
-  tasks:
-    - name: Create local mount directory
-      file:
-        path: /mnt/nfs/shared
-        state: directory
-        mode: '0755'
-
-    - name: Configure fstab entry for NFSv4 share and mount it
-      mount:
-        path: /mnt/nfs/shared
-        src: "{{ nfs_server_ip }}:/shared"
-        fstype: nfs4
-        opts: vers=4
-        state: mounted
+  become: true
+  roles:
+    - nfs_client

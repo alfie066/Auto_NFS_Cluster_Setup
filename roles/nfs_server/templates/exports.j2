@@ -1,0 +1,6 @@
+# Managed by Ansible. Do not edit manually.
+
+{{ nfs_export_root }} {{ cluster_subnet }}(ro,sync,fsid=0,no_subtree_check,root_squash,sec=sys)
+{% for share in nfs_shares %}
+{{ nfs_export_root }}/{{ share.name }} {{ cluster_subnet }}({{ share.export_options }}{% if share.required_mount | length > 0 %},mountpoint={{ share.required_mount }}{% endif %})
+{% endfor %}

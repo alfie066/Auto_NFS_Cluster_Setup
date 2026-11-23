@@ -1,3 +1,30 @@
 ---
-cluster_subnet: "192.0.0.0/24"
-nfs_server_ip: "192.0.0.4"
+# Explicitly select the inventory host serving NFS.
+nfs_server_host: s1
+
+# IPv4 network allowed to access the exports.
+cluster_subnet: "192.168.5.0/24"
+
+# NFSv4 namespace root on the server.
+nfs_export_root: /srv/nfs
+
+# Explicit client protocol and mount policy.
+nfs_client_mount_options: "rw,vers=4.2,proto=tcp,hard,_netdev"
+
+# Shared group. Choose an unused GID consistently across the cluster.
+nfs_shared_group: hpcusers
+nfs_shared_gid: 2000
+
+# Shares exported by the selected server.
+# Server path = nfs_export_root + "/" + name.
+nfs_shares:
+  - name: shared
+    client_path: /shared
+    owner: root
+    group: "{{ nfs_shared_group }}"
+    mode: "2770"
+    export_options: "rw,sync,no_subtree_check,root_squash,sec=sys"
+
+    # Empty means this share does not require a separate mounted disk.
+    # Set to /srv/nfs/shared when using the optional disk example below.
+    required_mount: ""

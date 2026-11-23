@@ -1,0 +1,7 @@
+---
+# Existing firewalld zone handling the server's internal interface.
+# Verify this value on the server before running.
+nfs_firewall_zone: public
+
+# Optional existing local filesystems to mount before exporting.
+nfs_storage_mounts: []
