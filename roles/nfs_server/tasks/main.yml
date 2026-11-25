@@ -37,12 +37,22 @@
     group: root
     mode: "0755"
 
-- name: Mount explicitly configured existing storage
+- name: Create filesystem on explicitly selected NFS storage
+  community.general.filesystem:
+    dev: "{{ item.device }}"
+    fstype: "{{ item.fstype }}"
+    force: false
+  loop: "{{ nfs_storage_mounts }}"
+  when: item.create_filesystem | default(false)
+  loop_control:
+    label: "{{ item.device }}"
+
+- name: Mount NFS storage
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "{{ item.src }}"
+    src: "{{ item.device }}"
     fstype: "{{ item.fstype }}"
-    opts: "{{ item.opts }}"
+    opts: "{{ item.opts | default('defaults') }}"
     state: mounted
   loop: "{{ nfs_storage_mounts }}"
   loop_control:
