@@ -9,3 +9,19 @@
     name: "{{ nfs_shared_group }}"
     gid: "{{ nfs_shared_gid }}"
     state: present
+
+- name: Verify configured NFS users already exist
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item }}"
+    fail_key: true
+  loop: "{{ nfs_shared_users | default([]) }}"
+  tags: [nfs_access]
+
+- name: Grant configured users access to the NFS share
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: "{{ nfs_shared_group }}"
+    append: true
+  loop: "{{ nfs_shared_users | default([]) }}"
+  tags: [nfs_access]

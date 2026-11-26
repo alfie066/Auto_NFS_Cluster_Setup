@@ -14,6 +14,8 @@ nfs_client_mount_options: "rw,vers=4.2,proto=tcp,hard,_netdev"
 # Shared group. Choose an unused GID consistently across the cluster.
 nfs_shared_group: hpcusers
 nfs_shared_gid: 2000
+nfs_shared_users:
+  - alfie
 
 # Shares exported by the selected server.
 # Server path = nfs_export_root + "/" + name.
@@ -27,4 +29,4 @@ nfs_shares:
 
     # Empty means this share does not require a separate mounted disk.
     # Set to /srv/nfs/shared when using the optional disk example below.
-    required_mount: ""
+    required_mount: /srv/nfs/shared

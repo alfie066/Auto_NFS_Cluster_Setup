@@ -4,4 +4,9 @@
 nfs_firewall_zone: public
 
 # Optional existing local filesystems to mount before exporting.
-nfs_storage_mounts: []
+nfs_storage_mounts:
+  - path: /srv/nfs/shared
+    device: /dev/sdb
+    fstype: xfs
+    create_filesystem: true
+    opts: defaults
